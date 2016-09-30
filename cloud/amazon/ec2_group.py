@@ -129,6 +129,8 @@ EXAMPLES = '''
         group_desc: other example EC2 group
 '''
 
+import itertools
+
 try:
     import boto.ec2
     from boto.ec2.securitygroup import SecurityGroup
@@ -324,11 +326,18 @@ def main():
                 # to 0.0.0.0/0 is added automatically but it's not
                 # reflected in the object returned by the AWS API
                 # call. We re-read the group for getting an updated object
-                # amazon sometimes takes a couple seconds to update the security group so wait till it exists
-                while len(ec2.get_all_security_groups(filters={ 'group_id': group.id, })) == 0:
-                    time.sleep(0.1)
-
-                group = ec2.get_all_security_groups(group_ids=(group.id,))[0]
+                # Amazon sometimes takes a little while to update the security
+                # group, so query (with exponential backoff) until it exists.
+                for i in itertools.count():
+                    group_id_filter = { 'group_id': group.id, }
+                    sec_group_matches = ec2.get_all_security_groups(
+                        filters=group_id_filter
+                    )
+                    if len(sec_group_matches) == 0:
+                        time.sleep(min(0.1 + (0.5 * i), 5))
+                        continue
+                    group = sec_group_matches[0]
+                    break
             changed = True
     else:
         module.fail_json(msg="Unsupported state requested: %s" % state)
